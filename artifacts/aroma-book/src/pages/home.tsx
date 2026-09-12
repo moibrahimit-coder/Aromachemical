@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/lib/i18n";
 import { useGetBookSettings } from "@workspace/api-client-react";
-import { ArrowRight, ArrowLeft, BookOpen, Search, FlaskConical, Beaker, CheckCircle2 } from "lucide-react";
+import { ArrowRight, ArrowLeft, BookOpen, Search, FlaskConical, CheckCircle2 } from "lucide-react";
 
 export default function Home() {
   const { t, language } = useLanguage();
@@ -119,12 +119,12 @@ export default function Home() {
         <div className="container mx-auto px-4 max-w-6xl">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
             <div className="relative aspect-square md:aspect-auto md:h-[500px] w-full rounded-2xl overflow-hidden shadow-2xl border border-primary/20 order-2 md:order-1">
-              {/* Replace with a generic perfumery lab image if available, else a stylized div */}
-              <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1608528577891-eb05ebecd1fa?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center opacity-40 mix-blend-overlay"></div>
-              <div className="absolute inset-0 bg-gradient-to-t from-secondary via-secondary/50 to-transparent"></div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Beaker className="w-32 h-32 text-primary opacity-50" />
-              </div>
+              <img
+                src={`${import.meta.env.BASE_URL}images/perfumery-lab.jpg`}
+                alt={isAr ? "زجاجات زيوت عطرية وأدوات تركيب العطور مع الياسمين والبرغموت" : "Aromatic oil bottles and perfumery tools with jasmine and bergamot"}
+                className="h-full w-full object-cover"
+                loading="lazy"
+              />
             </div>
             
             <div className="space-y-6 order-1 md:order-2">
