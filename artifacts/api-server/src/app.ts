@@ -10,8 +10,17 @@ import {
   clerkProxyMiddleware,
   getClerkProxyHost,
 } from "./middlewares/clerkProxyMiddleware";
+import { getCanonicalAppOrigin, isVercelRuntime, requireExternalRuntimeConfig } from "./lib/runtime";
 
 const app: Express = express();
+const runningOnVercel = isVercelRuntime();
+
+if (runningOnVercel) {
+  // Vercel uses a standard Clerk instance. Replit's Clerk frontend proxy is
+  // intentionally not exposed there; missing external configuration is an
+  // operator error, not a reason to fall back to Replit services.
+  requireExternalRuntimeConfig(["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY", "APP_URL"]);
+}
 
 app.use(
   pinoHttp({
@@ -32,17 +41,30 @@ app.use(
     },
   }),
 );
-app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
-app.use(cors({ credentials: true, origin: true }));
+if (!runningOnVercel) {
+  app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
+}
+app.use(
+  cors(
+    runningOnVercel
+      ? { credentials: true, origin: getCanonicalAppOrigin() }
+      : { credentials: true, origin: true },
+  ),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY,
-    ),
-  })),
+  runningOnVercel
+    ? clerkMiddleware({
+        publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
+        secretKey: process.env.CLERK_SECRET_KEY,
+      })
+    : clerkMiddleware((req) => ({
+        publishableKey: publishableKeyFromHost(
+          getClerkProxyHost(req) ?? "",
+          process.env.CLERK_PUBLISHABLE_KEY,
+        ),
+      })),
 );
 
 app.use("/api", router);

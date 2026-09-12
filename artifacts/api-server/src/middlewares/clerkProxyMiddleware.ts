@@ -8,6 +8,7 @@
 import type { IncomingHttpHeaders } from "node:http";
 import type { RequestHandler } from "express";
 import { createProxyMiddleware } from "http-proxy-middleware";
+import { isVercelRuntime } from "../lib/runtime";
 
 const CLERK_FAPI = "https://frontend-api.clerk.dev";
 export const CLERK_PROXY_PATH = "/api/__clerk";
@@ -22,6 +23,9 @@ export function getClerkProxyHost(req: {
 }
 
 export function clerkProxyMiddleware(): RequestHandler {
+  if (isVercelRuntime()) {
+    throw new Error("The Replit Clerk proxy cannot run on Vercel.");
+  }
   if (process.env.NODE_ENV !== "production") {
     return (_req, _res, next) => next();
   }

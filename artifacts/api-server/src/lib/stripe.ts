@@ -1,4 +1,5 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
+import { getCanonicalAppOrigin, isVercelRuntime, requireExternalRuntimeConfig } from "./runtime";
 
 const stripeConnectors = new ReplitConnectors();
 
@@ -44,11 +45,13 @@ async function stripeRequest<T>(
   if (params) headers["Content-Type"] = "application/x-www-form-urlencoded";
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
 
-  const response = await stripeConnectors.proxy("stripe", path, {
-    method,
-    headers,
-    body: params,
-  });
+  const response = isVercelRuntime()
+    ? await standardStripeRequest(path, method, headers, params)
+    : await stripeConnectors.proxy("stripe", path, {
+        method,
+        headers,
+        body: params,
+      });
   const raw = await response.text();
   if (!response.ok) {
     throw new StripeProviderError(response.status);
@@ -58,6 +61,24 @@ async function stripeRequest<T>(
   } catch {
     throw new StripeProviderError(502);
   }
+}
+
+async function standardStripeRequest(
+  path: string,
+  method: "GET" | "POST",
+  headers: Record<string, string>,
+  params?: URLSearchParams,
+): Promise<Response> {
+  const [secretKey] = requireExternalRuntimeConfig(["STRIPE_SECRET_KEY"]);
+  return fetch(`https://api.stripe.com${path}`, {
+    method,
+    headers: {
+      ...headers,
+      Authorization: `Bearer ${secretKey}`,
+    },
+    body: params,
+    signal: AbortSignal.timeout(30_000),
+  });
 }
 
 export function amountInMinorUnits(amount: number): number {
@@ -128,6 +149,9 @@ export async function createStripeCatalogPrice(args: {
 }
 
 export function getTrustedRuntimeOrigin(): string {
+  if (isVercelRuntime()) {
+    return getCanonicalAppOrigin();
+  }
   const configured = [
     ...(process.env.REPLIT_DOMAINS?.split(",") ?? []),
     process.env.REPLIT_DEV_DOMAIN,

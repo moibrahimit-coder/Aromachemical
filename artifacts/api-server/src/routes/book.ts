@@ -48,6 +48,7 @@ import {
   selectBookPrice,
 } from "../lib/bookPricing";
 import { logger } from "../lib/logger";
+import { isVercelRuntime } from "../lib/runtime";
 
 const router: IRouter = Router();
 const objectStorage = new ObjectStorageService();
@@ -203,6 +204,27 @@ async function sendPrivateObject(
   );
   nodeStream.on("error", (error) => req.log.error({ err: error }, "Private object stream failed"));
   nodeStream.pipe(res);
+}
+
+async function sendAuthorizedPrivateDownload(
+  req: Request,
+  res: Response,
+  filePath: string,
+  filename: string,
+): Promise<void> {
+  if (isVercelRuntime()) {
+    // The signed URL is sent only in this redirect after the caller passed all
+    // route-specific authorization and file-validation checks. Do not log it.
+    const downloadURL = await objectStorage.getVercelPrivateDownloadURL(
+      filePath,
+      filename,
+    );
+    res.setHeader("Cache-Control", "private, no-store");
+    res.redirect(302, downloadURL);
+    return;
+  }
+  // Preserve the existing Replit sidecar-backed stream.
+  await sendPrivateObject(req, res, filePath, filename);
 }
 
 async function verifyCardPayment(
@@ -389,8 +411,8 @@ router.post("/book/uploads", requireAuth, async (req, res): Promise<void> => {
     }
   }
   try {
-    const uploadURL = await objectStorage.getObjectEntityUploadURL();
-    const objectPath = objectStorage.normalizeObjectEntityPath(uploadURL);
+    const { uploadURL, objectPath } =
+      await objectStorage.createObjectEntityUploadDestination();
     if (!objectPath.startsWith("/objects/")) {
       throw new Error("Object storage returned an invalid object path");
     }
@@ -736,7 +758,12 @@ router.get("/book/orders/:id/download", requireAuth, async (req, res): Promise<v
       size: bookUpload.size,
       contentType: "application/pdf",
     });
-    await sendPrivateObject(req, res, bookUpload.objectPath, "aroma-school-ebook.pdf");
+    await sendAuthorizedPrivateDownload(
+      req,
+      res,
+      bookUpload.objectPath,
+      "aroma-school-ebook.pdf",
+    );
   } catch (error) {
     if (error instanceof ObjectNotFoundError) {
       res.status(404).json({ error: "Book is not available" });
@@ -928,7 +955,12 @@ router.get("/book/admin/orders/:id/receipt", requireAdmin, async (req, res): Pro
       size: upload.size,
       contentType: upload.contentType as "image/jpeg" | "image/png" | "application/pdf",
     });
-    await sendPrivateObject(req, res, upload.objectPath, upload.name.replace(/[^a-zA-Z0-9._-]/g, "_"));
+    await sendAuthorizedPrivateDownload(
+      req,
+      res,
+      upload.objectPath,
+      upload.name.replace(/[^a-zA-Z0-9._-]/g, "_"),
+    );
   } catch (error) {
     if (error instanceof ObjectNotFoundError) {
       res.status(404).json({ error: "Receipt not found" });

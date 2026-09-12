@@ -1,0 +1,26 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm run build:vercel",
+  "outputDirectory": "artifacts/aroma-book/dist/public",
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 60,
+      "includeFiles": [
+        "artifacts/api-server/src/**",
+        "lib/**"
+      ]
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/((?!api(?:/|$)).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

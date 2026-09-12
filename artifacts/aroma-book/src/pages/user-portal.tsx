@@ -144,7 +144,7 @@ export default function UserPortal() {
                 <div className="p-6 bg-background flex flex-col justify-center items-center border-t md:border-t-0 md:border-l md:rtl:border-l-0 md:rtl:border-r border-border/40 min-w-[200px]">
                   {order.status === 'paid' ? (
                     <Button asChild className="w-full gap-2 shadow-sm font-bold">
-                      <a href={`/api/book/orders/${order.id}/download`} download>
+                      <a href={`/api/book/orders/${order.id}/download`}>
                         <Download className="w-4 h-4" />
                         {t('portal.download')}
                       </a>
