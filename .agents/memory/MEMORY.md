@@ -1,0 +1,1 @@
+- [Stripe connector approach](stripe-connector.md) — use the connected proxy, not legacy raw-key setup; purchases are verified server-side.

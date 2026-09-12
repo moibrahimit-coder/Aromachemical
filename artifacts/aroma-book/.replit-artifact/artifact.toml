@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Aroma School | الأروما كيميكالز بالعربي"
+description = "Bilingual Arabic and English digital book store for Yousry Galal with secure card checkout and manual payment receipt review."
+version = "1.0.0"
+id = "artifacts/aroma-book"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21379
+
+[services.development]
+run = "pnpm --filter @workspace/aroma-book run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/aroma-book", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/aroma-book/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21379"
+BASE_PATH = "/"

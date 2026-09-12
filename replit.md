@@ -1,6 +1,6 @@
-# [Project name]
+# Aroma School — Digital Book Store
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Arabic-first bilingual store for Yousry Galal's ebook, with Stripe card checkout and private manual-transfer review.
 
 ## Run & Operate
 
@@ -34,7 +34,7 @@ _Describe the high-level user-facing capabilities of this app once they exist._
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+Use the supplied book cover, author portrait and Aroma School logo. The website supports Arabic and English; the ebook itself is Arabic. Do not invent a selling price, recipient account, reviews, or sales statistics.
 
 ## Gotchas
 

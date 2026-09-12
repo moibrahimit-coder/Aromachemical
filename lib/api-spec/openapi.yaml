@@ -1,36 +1,224 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 1.0.0
 servers:
   - url: /api
-    description: Base API path
-tags:
-  - name: health
-    description: Health operations
 paths:
   /healthz:
     get:
       operationId: healthCheck
-      tags: [health]
-      summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
           content:
             application/json:
+              schema: { $ref: "#/components/schemas/HealthStatus" }
+  /book/settings:
+    get:
+      operationId: getBookSettings
+      responses:
+        "200":
+          description: Public sale configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookSettings" }
+  /book/me:
+    get:
+      operationId: getBookMe
+      responses:
+        "200":
+          description: Current access
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookMe" }
+  /book/orders:
+    get:
+      operationId: listBookOrders
+      responses:
+        "200":
+          description: Current user's orders
+          content:
+            application/json:
               schema:
-                $ref: "#/components/schemas/HealthStatus"
+                type: array
+                items: { $ref: "#/components/schemas/BookOrder" }
+    post:
+      operationId: createBookOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderInput" }
+      responses:
+        "201":
+          description: Order created; Stripe URL for card orders
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookOrder" }
+  /book/orders/{id}/verify:
+    post:
+      operationId: verifyBookPayment
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Server-verified payment state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookOrder" }
+  /book/orders/{id}/download:
+    get:
+      operationId: downloadBook
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Authorized PDF download
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+  /book/uploads:
+    post:
+      operationId: requestBookUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UploadInput" }
+      responses:
+        "200":
+          description: Private direct upload destination
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadDestination" }
+  /book/admin/settings:
+    put:
+      operationId: saveBookSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettingsInput" }
+      responses:
+        "200":
+          description: Saved settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookSettings" }
+  /book/admin/orders:
+    get:
+      operationId: listAdminBookOrders
+      responses:
+        "200":
+          description: Orders for review
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BookOrder" }
+  /book/admin/orders/{id}:
+    patch:
+      operationId: reviewBookOrder
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewInput" }
+      responses:
+        "200":
+          description: Reviewed order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookOrder" }
+  /book/admin/orders/{id}/receipt:
+    get:
+      operationId: downloadReceipt
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Private receipt
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
-        status:
-          type: string
-      required:
-        - status
-
+        status: { type: string }
+    BookSettings:
+      type: object
+      required: [price, currency, vodafoneCash, instaPay, bookReady, cardReady, salesEnabled]
+      properties:
+        price: { type: [number, "null"] }
+        currency: { type: string }
+        vodafoneCash: { type: string }
+        instaPay: { type: string }
+        bookReady: { type: boolean }
+        cardReady: { type: boolean }
+        salesEnabled: { type: boolean }
+    SettingsInput:
+      type: object
+      required: [price, currency, vodafoneCash, instaPay, salesEnabled]
+      properties:
+        price: { type: number, exclusiveMinimum: 0, maximum: 100000 }
+        currency: { type: string, enum: [egp, usd] }
+        vodafoneCash: { type: string, maxLength: 100 }
+        instaPay: { type: string, maxLength: 200 }
+        bookObjectPath: { type: string }
+        salesEnabled: { type: boolean }
+    BookMe:
+      type: object
+      required: [signedIn, isAdmin]
+      properties:
+        signedIn: { type: boolean }
+        isAdmin: { type: boolean }
+    BookOrder:
+      type: object
+      required: [id, name, email, method, status, amount, currency, createdAt, hasReceipt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+        method: { type: string, enum: [card, vodafone, instapay] }
+        status: { type: string, enum: [pending, paid, rejected] }
+        amount: { type: number }
+        currency: { type: string }
+        createdAt: { type: string }
+        hasReceipt: { type: boolean }
+        checkoutUrl: { type: [string, "null"] }
+        reviewNote: { type: [string, "null"] }
+    OrderInput:
+      type: object
+      required: [name, email, method, language]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 120 }
+        email: { type: string, format: email, maxLength: 200 }
+        method: { type: string, enum: [card, vodafone, instapay] }
+        language: { type: string, enum: [ar, en] }
+        receiptObjectPath: { type: string }
+    UploadInput:
+      type: object
+      required: [name, size, contentType, purpose]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        size: { type: integer, minimum: 1, maximum: 52428800 }
+        contentType: { type: string, enum: [image/jpeg, image/png, application/pdf] }
+        purpose: { type: string, enum: [receipt, book] }
+    UploadDestination:
+      type: object
+      required: [uploadURL, objectPath]
+      properties:
+        uploadURL: { type: string }
+        objectPath: { type: string }
+    ReviewInput:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [paid, rejected] }
+        reviewNote: { type: string, maxLength: 1000 }
