@@ -73,6 +73,8 @@ function AdminSettings() {
   const requestUpload = useRequestBookUpload();
   
   const [price, setPrice] = useState("");
+  const [offerPrice, setOfferPrice] = useState("");
+  const [offerLimit, setOfferLimit] = useState("100");
   const [currency, setCurrency] = useState<"egp"|"usd">("egp");
   const [vodafone, setVodafone] = useState("");
   const [instapay, setInstapay] = useState("");
@@ -87,6 +89,8 @@ function AdminSettings() {
   useEffect(() => {
     if (settings && !initRef.current) {
       setPrice(settings.price?.toString() || "");
+      setOfferPrice(settings.offerPrice?.toString() || "");
+      setOfferLimit(settings.offerLimit.toString());
       setCurrency(settings.currency as "egp"|"usd" || "egp");
       setVodafone(settings.vodafoneCash || "");
       setInstapay(settings.instaPay || "");
@@ -124,6 +128,8 @@ function AdminSettings() {
       await saveSettings.mutateAsync({
         data: {
           price: Number(price) || 0,
+          offerPrice: Number(offerPrice) || 0,
+          offerLimit: Number(offerLimit) || 0,
           currency,
           vodafoneCash: vodafone,
           instaPay: instapay,
@@ -150,8 +156,16 @@ function AdminSettings() {
       <CardContent className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">
-            <Label>{t('admin.price')}</Label>
+            <Label>{t('admin.regular_price')}</Label>
             <Input type="number" value={price} onChange={e => setPrice(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>{t('admin.offer_price')}</Label>
+            <Input type="number" value={offerPrice} onChange={e => setOfferPrice(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>{t('admin.offer_limit')}</Label>
+            <Input type="number" min="1" value={offerLimit} onChange={e => setOfferLimit(e.target.value)} />
           </div>
           <div className="space-y-2">
             <Label>{t('admin.currency')}</Label>
@@ -173,6 +187,9 @@ function AdminSettings() {
             <Input value={instapay} onChange={e => setInstapay(e.target.value)} />
           </div>
         </div>
+        <p className="rounded-md border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">
+          {t('admin.offer_policy')}
+        </p>
 
         <div className="flex items-center space-x-2 rtl:space-x-reverse py-4 border-y">
           <Switch id="sales-mode" checked={salesEnabled} onCheckedChange={setSalesEnabled} />
@@ -224,7 +241,7 @@ function AdminOrders() {
     <Card>
       <CardHeader>
         <CardTitle>{t('admin.orders')}</CardTitle>
-        <CardDescription>{orders?.length} total orders</CardDescription>
+        <CardDescription>{t('admin.pending_orders')}: {orders?.length ?? 0}</CardDescription>
       </CardHeader>
       <CardContent>
         <Table>
@@ -249,6 +266,7 @@ function AdminOrders() {
                 <TableCell>
                   <span className="capitalize">{order.method}</span>
                   <div className="text-xs font-medium">{order.amount} {order.currency}</div>
+                  <div className="text-xs text-muted-foreground">{order.priceTier === "offer" ? t('admin.offer_order') : t('admin.regular_order')}</div>
                 </TableCell>
                 <TableCell>
                   <span className={`px-2 py-1 rounded text-xs font-medium ${

@@ -5,6 +5,7 @@
  * OpenAPI spec version: 1.0.0
  */
 import type { BookOrderMethod } from './bookOrderMethod';
+import type { BookOrderPriceTier } from './bookOrderPriceTier';
 import type { BookOrderStatus } from './bookOrderStatus';
 
 export interface BookOrder {
@@ -15,6 +16,7 @@ export interface BookOrder {
   status: BookOrderStatus;
   amount: number;
   currency: string;
+  priceTier: BookOrderPriceTier;
   createdAt: string;
   hasReceipt: boolean;
   /** @nullable */

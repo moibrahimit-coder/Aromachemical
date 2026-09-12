@@ -67,6 +67,17 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BookOrder" }
+  /book/orders/{id}/retry:
+    post:
+      operationId: retryBookCheckout
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Existing card checkout resumed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookOrder" }
   /book/orders/{id}/download:
     get:
       operationId: downloadBook
@@ -153,9 +164,12 @@ components:
         status: { type: string }
     BookSettings:
       type: object
-      required: [price, currency, vodafoneCash, instaPay, bookReady, cardReady, salesEnabled]
+      required: [price, offerPrice, offerLimit, offerAvailable, currency, vodafoneCash, instaPay, bookReady, cardReady, salesEnabled]
       properties:
         price: { type: [number, "null"] }
+        offerPrice: { type: [number, "null"] }
+        offerLimit: { type: integer, minimum: 1 }
+        offerAvailable: { type: boolean }
         currency: { type: string }
         vodafoneCash: { type: string }
         instaPay: { type: string }
@@ -164,9 +178,11 @@ components:
         salesEnabled: { type: boolean }
     SettingsInput:
       type: object
-      required: [price, currency, vodafoneCash, instaPay, salesEnabled]
+      required: [price, offerPrice, offerLimit, currency, vodafoneCash, instaPay, salesEnabled]
       properties:
         price: { type: number, exclusiveMinimum: 0, maximum: 100000 }
+        offerPrice: { type: number, exclusiveMinimum: 0, maximum: 100000 }
+        offerLimit: { type: integer, minimum: 1, maximum: 100000 }
         currency: { type: string, enum: [egp, usd] }
         vodafoneCash: { type: string, maxLength: 100 }
         instaPay: { type: string, maxLength: 200 }
@@ -180,27 +196,30 @@ components:
         isAdmin: { type: boolean }
     BookOrder:
       type: object
-      required: [id, name, email, method, status, amount, currency, createdAt, hasReceipt]
+      required: [id, name, email, method, status, amount, currency, priceTier, createdAt, hasReceipt]
       properties:
         id: { type: string }
         name: { type: string }
         email: { type: string }
         method: { type: string, enum: [card, vodafone, instapay] }
-        status: { type: string, enum: [pending, paid, rejected] }
+        status: { type: string, enum: [pending, paid, rejected, failed, expired] }
         amount: { type: number }
         currency: { type: string }
+        priceTier: { type: string, enum: [offer, regular] }
         createdAt: { type: string }
         hasReceipt: { type: boolean }
         checkoutUrl: { type: [string, "null"] }
         reviewNote: { type: [string, "null"] }
     OrderInput:
       type: object
-      required: [name, email, method, language]
+      required: [name, email, method, language, expectedAmount, expectedCurrency]
       properties:
         name: { type: string, minLength: 2, maxLength: 120 }
         email: { type: string, format: email, maxLength: 200 }
         method: { type: string, enum: [card, vodafone, instapay] }
         language: { type: string, enum: [ar, en] }
+        expectedAmount: { type: number, exclusiveMinimum: 0, maximum: 100000 }
+        expectedCurrency: { type: string, enum: [egp, usd] }
         receiptObjectPath: { type: string }
     UploadInput:
       type: object

@@ -1,1 +1,2 @@
 - [Stripe connector approach](stripe-connector.md) — use the connected proxy, not legacy raw-key setup; purchases are verified server-side.
+- [Limited-offer reservations](limited-offer.md) — preserve potentially payable reservations; manual transfers require review before release.

@@ -12,6 +12,16 @@ export interface SettingsInput {
      * @exclusiveMinimum 0
      */
   price: number;
+  /**
+     * @maximum 100000
+     * @exclusiveMinimum 0
+     */
+  offerPrice: number;
+  /**
+     * @minimum 1
+     * @maximum 100000
+     */
+  offerLimit: number;
   currency: SettingsInputCurrency;
   /** @maxLength 100 */
   vodafoneCash: string;

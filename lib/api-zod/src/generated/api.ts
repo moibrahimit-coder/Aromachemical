@@ -12,8 +12,14 @@ export const HealthCheckResponse = zod.object({
 })
 
 
+
+
+
 export const GetBookSettingsResponse = zod.object({
   "price": zod.number().nullable(),
+  "offerPrice": zod.number().nullable(),
+  "offerLimit": zod.number().int().min(1),
+  "offerAvailable": zod.boolean(),
   "currency": zod.string(),
   "vodafoneCash": zod.string(),
   "instaPay": zod.string(),
@@ -34,9 +40,10 @@ export const ListBookOrdersResponseItem = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "method": zod.enum(['card', 'vodafone', 'instapay']),
-  "status": zod.enum(['pending', 'paid', 'rejected']),
+  "status": zod.enum(['pending', 'paid', 'rejected', 'failed', 'expired']),
   "amount": zod.number(),
   "currency": zod.string(),
+  "priceTier": zod.enum(['offer', 'regular']),
   "createdAt": zod.string(),
   "hasReceipt": zod.boolean(),
   "checkoutUrl": zod.string().nullish(),
@@ -50,6 +57,9 @@ export const createBookOrderBodyNameMax = 120;
 
 export const createBookOrderBodyEmailMax = 200;
 
+export const createBookOrderBodyExpectedAmountExclusiveMin = 0;
+export const createBookOrderBodyExpectedAmountMax = 100000;
+
 
 
 export const CreateBookOrderBody = zod.object({
@@ -57,6 +67,8 @@ export const CreateBookOrderBody = zod.object({
   "email": zod.string().email().max(createBookOrderBodyEmailMax),
   "method": zod.enum(['card', 'vodafone', 'instapay']),
   "language": zod.enum(['ar', 'en']),
+  "expectedAmount": zod.number().gt(createBookOrderBodyExpectedAmountExclusiveMin).max(createBookOrderBodyExpectedAmountMax),
+  "expectedCurrency": zod.enum(['egp', 'usd']),
   "receiptObjectPath": zod.string().optional()
 })
 
@@ -65,9 +77,10 @@ export const CreateBookOrderResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "method": zod.enum(['card', 'vodafone', 'instapay']),
-  "status": zod.enum(['pending', 'paid', 'rejected']),
+  "status": zod.enum(['pending', 'paid', 'rejected', 'failed', 'expired']),
   "amount": zod.number(),
   "currency": zod.string(),
+  "priceTier": zod.enum(['offer', 'regular']),
   "createdAt": zod.string(),
   "hasReceipt": zod.boolean(),
   "checkoutUrl": zod.string().nullish(),
@@ -84,9 +97,30 @@ export const VerifyBookPaymentResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "method": zod.enum(['card', 'vodafone', 'instapay']),
-  "status": zod.enum(['pending', 'paid', 'rejected']),
+  "status": zod.enum(['pending', 'paid', 'rejected', 'failed', 'expired']),
   "amount": zod.number(),
   "currency": zod.string(),
+  "priceTier": zod.enum(['offer', 'regular']),
+  "createdAt": zod.string(),
+  "hasReceipt": zod.boolean(),
+  "checkoutUrl": zod.string().nullish(),
+  "reviewNote": zod.string().nullish()
+})
+
+
+export const RetryBookCheckoutParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const RetryBookCheckoutResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "method": zod.enum(['card', 'vodafone', 'instapay']),
+  "status": zod.enum(['pending', 'paid', 'rejected', 'failed', 'expired']),
+  "amount": zod.number(),
+  "currency": zod.string(),
+  "priceTier": zod.enum(['offer', 'regular']),
   "createdAt": zod.string(),
   "hasReceipt": zod.boolean(),
   "checkoutUrl": zod.string().nullish(),
@@ -123,6 +157,11 @@ export const RequestBookUploadResponse = zod.object({
 export const saveBookSettingsBodyPriceExclusiveMin = 0;
 export const saveBookSettingsBodyPriceMax = 100000;
 
+export const saveBookSettingsBodyOfferPriceExclusiveMin = 0;
+export const saveBookSettingsBodyOfferPriceMax = 100000;
+
+export const saveBookSettingsBodyOfferLimitMax = 100000;
+
 export const saveBookSettingsBodyVodafoneCashMax = 100;
 
 export const saveBookSettingsBodyInstaPayMax = 200;
@@ -131,6 +170,8 @@ export const saveBookSettingsBodyInstaPayMax = 200;
 
 export const SaveBookSettingsBody = zod.object({
   "price": zod.number().gt(saveBookSettingsBodyPriceExclusiveMin).max(saveBookSettingsBodyPriceMax),
+  "offerPrice": zod.number().gt(saveBookSettingsBodyOfferPriceExclusiveMin).max(saveBookSettingsBodyOfferPriceMax),
+  "offerLimit": zod.number().int().min(1).max(saveBookSettingsBodyOfferLimitMax),
   "currency": zod.enum(['egp', 'usd']),
   "vodafoneCash": zod.string().max(saveBookSettingsBodyVodafoneCashMax),
   "instaPay": zod.string().max(saveBookSettingsBodyInstaPayMax),
@@ -138,8 +179,14 @@ export const SaveBookSettingsBody = zod.object({
   "salesEnabled": zod.boolean()
 })
 
+
+
+
 export const SaveBookSettingsResponse = zod.object({
   "price": zod.number().nullable(),
+  "offerPrice": zod.number().nullable(),
+  "offerLimit": zod.number().int().min(1),
+  "offerAvailable": zod.boolean(),
   "currency": zod.string(),
   "vodafoneCash": zod.string(),
   "instaPay": zod.string(),
@@ -154,9 +201,10 @@ export const ListAdminBookOrdersResponseItem = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "method": zod.enum(['card', 'vodafone', 'instapay']),
-  "status": zod.enum(['pending', 'paid', 'rejected']),
+  "status": zod.enum(['pending', 'paid', 'rejected', 'failed', 'expired']),
   "amount": zod.number(),
   "currency": zod.string(),
+  "priceTier": zod.enum(['offer', 'regular']),
   "createdAt": zod.string(),
   "hasReceipt": zod.boolean(),
   "checkoutUrl": zod.string().nullish(),
@@ -183,9 +231,10 @@ export const ReviewBookOrderResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "method": zod.enum(['card', 'vodafone', 'instapay']),
-  "status": zod.enum(['pending', 'paid', 'rejected']),
+  "status": zod.enum(['pending', 'paid', 'rejected', 'failed', 'expired']),
   "amount": zod.number(),
   "currency": zod.string(),
+  "priceTier": zod.enum(['offer', 'regular']),
   "createdAt": zod.string(),
   "hasReceipt": zod.boolean(),
   "checkoutUrl": zod.string().nullish(),

@@ -491,6 +491,74 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(getVerifyBookPaymentMutationOptions(options));
     }
 
+export const getRetryBookCheckoutUrl = (id: string,) => {
+
+
+
+
+  return `/api/book/orders/${id}/retry`
+}
+
+export const retryBookCheckout = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<BookOrder> => {
+
+  return customFetch<BookOrder>(getRetryBookCheckoutUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRetryBookCheckoutMutationKey = () => ['retryBookCheckout'] as const;
+
+export const getRetryBookCheckoutMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryBookCheckout>>, TError,RetryBookCheckoutMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryBookCheckout>>, TError,RetryBookCheckoutMutationVariables, TContext> => {
+
+const mutationKey = getRetryBookCheckoutMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryBookCheckout>>, RetryBookCheckoutMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  retryBookCheckout(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryBookCheckoutMutationResult = NonNullable<Awaited<ReturnType<typeof retryBookCheckout>>>
+
+    export type RetryBookCheckoutMutationError = ErrorType<unknown>
+    export type RetryBookCheckoutMutationVariables = {id: string}
+
+    export const useRetryBookCheckout = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryBookCheckout>>, TError,RetryBookCheckoutMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof retryBookCheckout>>,
+        TError,
+        RetryBookCheckoutMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRetryBookCheckoutMutationOptions(options));
+    }
+
 export const getDownloadBookUrl = (id: string,) => {
 
 

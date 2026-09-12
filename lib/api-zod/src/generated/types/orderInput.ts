@@ -4,6 +4,7 @@
  * Api
  * OpenAPI spec version: 1.0.0
  */
+import type { OrderInputExpectedCurrency } from './orderInputExpectedCurrency';
 import type { OrderInputLanguage } from './orderInputLanguage';
 import type { OrderInputMethod } from './orderInputMethod';
 
@@ -17,5 +18,11 @@ export interface OrderInput {
   email: string;
   method: OrderInputMethod;
   language: OrderInputLanguage;
+  /**
+     * @maximum 100000
+     * @exclusiveMinimum 0
+     */
+  expectedAmount: number;
+  expectedCurrency: OrderInputExpectedCurrency;
   receiptObjectPath?: string;
 }

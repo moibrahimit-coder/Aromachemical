@@ -8,6 +8,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { z } from "zod/v4";
 
 export const bookOrdersTable = pgTable(
@@ -22,6 +23,7 @@ export const bookOrdersTable = pgTable(
     status: text("status").notNull().default("pending"),
     amount: numeric("amount", { precision: 12, scale: 2, mode: "number" }).notNull(),
     currency: text("currency").notNull(),
+    priceTier: text("price_tier").notNull().default("regular"),
     receiptObjectPath: text("receipt_object_path"),
     stripePriceId: text("stripe_price_id"),
     stripeCheckoutSessionId: text("stripe_checkout_session_id").unique(),
@@ -43,6 +45,11 @@ export const bookOrdersTable = pgTable(
       table.clerkUserId,
       table.idempotencyKey,
     ),
+    // A buyer may resume their single pending payment, but cannot occupy
+    // multiple promotional reservations with repeated checkout attempts.
+    ownerPendingOrderIndex: uniqueIndex("book_orders_one_pending_per_owner_idx")
+      .on(table.clerkUserId)
+      .where(sql`${table.status} = 'pending'`),
   }),
 );
 

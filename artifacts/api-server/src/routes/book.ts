@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
   CreateBookOrderBody,
@@ -14,6 +14,8 @@ import {
   ReviewBookOrderBody,
   ReviewBookOrderParams,
   ReviewBookOrderResponse,
+  RetryBookCheckoutParams,
+  RetryBookCheckoutResponse,
   SaveBookSettingsBody,
   SaveBookSettingsResponse,
   VerifyBookPaymentParams,
@@ -39,22 +41,48 @@ import {
   StripeProviderError,
   verifyStripeCheckoutSession,
 } from "../lib/stripe";
+import {
+  expectedPriceMatches,
+  isPromotionConfigured,
+  resolveCardReconciliationStatus,
+  selectBookPrice,
+} from "../lib/bookPricing";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 const objectStorage = new ObjectStorageService();
 
 const defaultSettings = {
   id: 1,
-  price: null,
+  price: 2000,
+  offerPrice: 999,
+  offerLimit: 100,
   currency: "egp",
   vodafoneCash: "",
   instaPay: "",
   bookObjectPath: null,
   stripeProductId: null,
   stripePriceId: null,
+  stripeOfferPriceId: null,
   salesEnabled: false,
   updatedBy: null,
 } as const;
+
+class OrderConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OrderConflictError";
+  }
+}
+
+class CardCheckoutConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CardCheckoutConfigurationError";
+  }
+}
+
+const promotionReconciliationLimit = 20;
 
 async function getSettings() {
   await db
@@ -93,18 +121,37 @@ async function hasValidBook(settings: Awaited<ReturnType<typeof getSettings>>) {
   }
 }
 
+async function countActiveOfferReservations() {
+  const [result] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(bookOrdersTable)
+    .where(
+      and(
+        eq(bookOrdersTable.priceTier, "offer"),
+        sql`${bookOrdersTable.status} IN ('pending', 'paid')`,
+      ),
+    );
+  return result?.count ?? 0;
+}
+
 async function toPublicSettings() {
   const settings = await getSettings();
   const bookReady = await hasValidBook(settings);
-  const cardReady = Boolean(
-    settings.stripePriceId && settings.price !== null && settings.price > 0,
-  );
+  await reconcilePendingPromotionCardOrders();
+  const activeOfferReservations = await countActiveOfferReservations();
+  const selectedPrice = selectBookPrice(settings, activeOfferReservations);
+  const offerAvailable =
+    isPromotionConfigured(settings) && selectedPrice.tier === "offer";
+  const cardReady = Boolean(selectedPrice.stripePriceId);
   const paymentMethodReady =
     settings.vodafoneCash.trim().length > 0 ||
     settings.instaPay.trim().length > 0 ||
     cardReady;
   return GetBookSettingsResponse.parse({
     price: settings.price,
+    offerPrice: settings.offerPrice,
+    offerLimit: settings.offerLimit,
+    offerAvailable,
     currency: settings.currency,
     vodafoneCash: settings.vodafoneCash,
     instaPay: settings.instaPay,
@@ -112,7 +159,6 @@ async function toPublicSettings() {
     cardReady,
     salesEnabled:
       settings.salesEnabled &&
-      settings.price !== null &&
       settings.price > 0 &&
       bookReady &&
       paymentMethodReady,
@@ -128,6 +174,7 @@ function orderResponse(order: typeof bookOrdersTable.$inferSelect) {
     status: order.status,
     amount: order.amount,
     currency: order.currency,
+    priceTier: order.priceTier,
     createdAt: order.createdAt.toISOString(),
     hasReceipt: Boolean(order.receiptObjectPath),
     checkoutUrl: order.checkoutUrl,
@@ -175,13 +222,125 @@ async function verifyCardPayment(
     session.metadata?.orderId === order.id &&
     lineItem?.quantity === 1 &&
     lineItem.price?.id === order.stripePriceId;
-  if (paymentMatches && order.status === "pending") {
+  const nextStatus = resolveCardReconciliationStatus({
+    currentStatus: order.status,
+    paymentMatches,
+    checkoutStatus: session.status,
+  });
+  if (nextStatus !== order.status) {
     await db
       .update(bookOrdersTable)
-      .set({ status: "paid", updatedAt: new Date() })
+      .set({
+        status: nextStatus,
+        updatedAt: new Date(),
+      })
       .where(and(eq(bookOrdersTable.id, order.id), eq(bookOrdersTable.status, "pending")));
   }
   return paymentMatches;
+}
+
+async function reconcilePendingPromotionCardOrders(): Promise<void> {
+  const pendingOrders = await db
+    .select()
+    .from(bookOrdersTable)
+    .where(
+      and(
+        eq(bookOrdersTable.method, "card"),
+        eq(bookOrdersTable.priceTier, "offer"),
+        eq(bookOrdersTable.status, "pending"),
+        isNotNull(bookOrdersTable.stripeCheckoutSessionId),
+      ),
+    )
+    .limit(promotionReconciliationLimit);
+  const results = await Promise.allSettled(pendingOrders.map(verifyCardPayment));
+  const failed = results.filter((result) => result.status === "rejected").length;
+  if (failed > 0) {
+    logger.warn(
+      { failed, checked: pendingOrders.length },
+      "Some pending promotional Stripe sessions could not be reconciled",
+    );
+  }
+}
+
+function isDefinitivePreSessionFailure(
+  error: unknown,
+  order: typeof bookOrdersTable.$inferSelect,
+): boolean {
+  return (
+    !order.stripeCheckoutSessionId &&
+    (error instanceof CardCheckoutConfigurationError ||
+      (error instanceof StripeProviderError &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        error.status !== 429))
+  );
+}
+
+async function markDefinitivelyFailedCheckout(
+  error: unknown,
+  order: typeof bookOrdersTable.$inferSelect,
+): Promise<void> {
+  if (!isDefinitivePreSessionFailure(error, order)) return;
+  await db
+    .update(bookOrdersTable)
+    .set({ status: "failed", updatedAt: new Date() })
+    .where(
+      and(
+        eq(bookOrdersTable.id, order.id),
+        eq(bookOrdersTable.status, "pending"),
+        isNull(bookOrdersTable.stripeCheckoutSessionId),
+      ),
+    );
+}
+
+async function createOrResumeCardCheckout(
+  order: typeof bookOrdersTable.$inferSelect,
+): Promise<typeof bookOrdersTable.$inferSelect> {
+  if (order.checkoutUrl) return order;
+  if (!order.stripePriceId) {
+    throw new CardCheckoutConfigurationError("Card checkout is not configured for this order");
+  }
+  if (order.stripeCheckoutSessionId) {
+    throw new Error("A checkout session exists but cannot be resumed from this order");
+  }
+  const providerPrice = await getStripePrice(order.stripePriceId!);
+  if (
+    providerPrice.active === false ||
+    providerPrice.unit_amount !== amountInMinorUnits(order.amount) ||
+    providerPrice.currency !== order.currency
+  ) {
+    throw new CardCheckoutConfigurationError(
+      "Configured Stripe price does not match the server snapshot",
+    );
+  }
+  const session = await createStripeCheckoutSession({
+    orderId: order.id,
+    priceId: order.stripePriceId!,
+    amount: order.amount,
+    currency: order.currency as "egp" | "usd",
+    idempotencyKey: `book-order-${order.id}`,
+  });
+  if (!session.url) {
+    // A response without a URL can still represent an accepted provider
+    // request, so keep this order pending rather than releasing its slot.
+    throw new Error("Stripe returned no checkout URL");
+  }
+  const [updated] = await db
+    .update(bookOrdersTable)
+    .set({
+      stripeCheckoutSessionId: session.id,
+      checkoutUrl: session.url,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(bookOrdersTable.id, order.id),
+        eq(bookOrdersTable.status, "pending"),
+        isNull(bookOrdersTable.stripeCheckoutSessionId),
+      ),
+    )
+    .returning();
+  return updated ?? order;
 }
 
 router.get("/book/settings", async (_req, res): Promise<void> => {
@@ -277,7 +436,6 @@ router.post("/book/orders", requireAuth, async (req, res): Promise<void> => {
     settings.vodafoneCash.trim().length > 0 || settings.instaPay.trim().length > 0;
   if (
     !settings.salesEnabled ||
-    settings.price === null ||
     settings.price <= 0 ||
     !bookReady ||
     (parsed.data.method !== "card" && !paymentMethodReady)
@@ -292,11 +450,6 @@ router.post("/book/orders", requireAuth, async (req, res): Promise<void> => {
     res.status(409).json({ error: "Selected payment method is not configured" });
     return;
   }
-  if (parsed.data.method === "card" && !settings.stripePriceId) {
-    res.status(409).json({ error: "Card checkout is not configured" });
-    return;
-  }
-
   const receiptPath = parsed.data.receiptObjectPath;
   if (parsed.data.method === "card" && receiptPath) {
     res.status(400).json({ error: "Card orders cannot include a manual receipt" });
@@ -361,73 +514,115 @@ router.post("/book/orders", requireAuth, async (req, res): Promise<void> => {
   }
 
   if (!order) {
+    // Reconciliation is intentionally outside the settings-row transaction:
+    // Stripe calls must never hold the lock that serializes new reservations.
+    await reconcilePendingPromotionCardOrders();
     try {
       order = await db.transaction(async (tx) => {
-      if (receiptUpload) {
-        const [claimed] = await tx
-          .update(bookUploadsTable)
-          .set({ usedAt: new Date() })
-          .where(and(eq(bookUploadsTable.id, receiptUpload.id), isNull(bookUploadsTable.usedAt)))
+        // Every reservation takes this row lock before counting slots. This
+        // serializes price selection and prevents two simultaneous requests
+        // from both taking the final first-edition slot.
+        await tx.execute(sql`SELECT id FROM book_settings WHERE id = 1 FOR UPDATE`);
+        const [lockedSettings] = await tx
+          .select()
+          .from(bookSettingsTable)
+          .where(eq(bookSettingsTable.id, 1));
+        if (!lockedSettings || lockedSettings.bookObjectPath !== settings.bookObjectPath) {
+          throw new OrderConflictError("Store configuration changed. Refresh the checkout page.");
+        }
+        if (!lockedSettings.salesEnabled || lockedSettings.price <= 0) {
+          throw new OrderConflictError("Sales are not currently available");
+        }
+        if (
+          (parsed.data.method === "vodafone" && !lockedSettings.vodafoneCash.trim()) ||
+          (parsed.data.method === "instapay" && !lockedSettings.instaPay.trim())
+        ) {
+          throw new OrderConflictError("Selected payment method is not configured");
+        }
+
+        const [existingPendingOrder] = await tx
+          .select({ id: bookOrdersTable.id })
+          .from(bookOrdersTable)
+          .where(
+            and(
+              eq(bookOrdersTable.clerkUserId, userId),
+              eq(bookOrdersTable.status, "pending"),
+            ),
+          )
+          .limit(1);
+        if (existingPendingOrder) {
+          throw new OrderConflictError(
+            "You already have a pending order. Complete or wait for that order before placing another.",
+          );
+        }
+
+        const [reservationCount] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(bookOrdersTable)
+          .where(
+            and(
+              eq(bookOrdersTable.priceTier, "offer"),
+              sql`${bookOrdersTable.status} IN ('pending', 'paid')`,
+            ),
+          );
+        const selectedPrice = selectBookPrice(lockedSettings, reservationCount?.count ?? 0);
+        if (
+          !expectedPriceMatches(
+            selectedPrice,
+            parsed.data.expectedAmount,
+            parsed.data.expectedCurrency,
+          )
+        ) {
+          throw new OrderConflictError(
+            "The displayed price has changed. Refresh the checkout page before continuing.",
+          );
+        }
+        if (parsed.data.method === "card" && !selectedPrice.stripePriceId) {
+          throw new OrderConflictError("Card checkout is not configured for the current price");
+        }
+
+        if (receiptUpload) {
+          const [claimed] = await tx
+            .update(bookUploadsTable)
+            .set({ usedAt: new Date() })
+            .where(and(eq(bookUploadsTable.id, receiptUpload.id), isNull(bookUploadsTable.usedAt)))
+            .returning();
+          if (!claimed) throw new Error("Receipt upload is already used");
+        }
+        const [created] = await tx
+          .insert(bookOrdersTable)
+          .values({
+            clerkUserId: userId,
+            name: parsed.data.name,
+            email: parsed.data.email.toLowerCase(),
+            method: parsed.data.method,
+            language: parsed.data.language,
+            status: "pending",
+            amount: selectedPrice.amount,
+            currency: selectedPrice.currency,
+            priceTier: selectedPrice.tier,
+            receiptObjectPath: receiptUpload?.objectPath,
+            stripePriceId: parsed.data.method === "card" ? selectedPrice.stripePriceId : null,
+            idempotencyKey,
+          })
           .returning();
-        if (!claimed) throw new Error("Receipt upload is already used");
-      }
-      const [created] = await tx
-        .insert(bookOrdersTable)
-        .values({
-          clerkUserId: userId,
-          name: parsed.data.name,
-          email: parsed.data.email.toLowerCase(),
-          method: parsed.data.method,
-          language: parsed.data.language,
-          status: "pending",
-          amount: settings.price!,
-          currency: settings.currency,
-          receiptObjectPath: receiptUpload?.objectPath,
-          stripePriceId: parsed.data.method === "card" ? settings.stripePriceId : null,
-          idempotencyKey,
-        })
-        .returning();
-      if (!created) throw new Error("Unable to persist order");
-      return created;
+        if (!created) throw new Error("Unable to persist order");
+        return created;
       });
     } catch (error) {
       req.log.warn({ err: error }, "Order creation was rejected");
-      res.status(409).json({ error: "Order could not be created" });
+      res.status(409).json({
+        error: error instanceof OrderConflictError ? error.message : "Order could not be created",
+      });
       return;
     }
   }
 
   if (order.method === "card") {
     try {
-      const providerPrice = await getStripePrice(order.stripePriceId!);
-      if (
-        providerPrice.active === false ||
-        providerPrice.unit_amount !== amountInMinorUnits(order.amount) ||
-        providerPrice.currency !== order.currency
-      ) {
-        throw new Error("Configured Stripe price does not match the server snapshot");
-      }
-      const session = await createStripeCheckoutSession({
-        orderId: order.id,
-        priceId: order.stripePriceId!,
-        amount: order.amount,
-        currency: order.currency as "egp" | "usd",
-        idempotencyKey: `book-order-${order.id}`,
-      });
-      if (!session.url) {
-        throw new Error("Stripe returned no checkout URL");
-      }
-      const [updated] = await db
-        .update(bookOrdersTable)
-        .set({
-          stripeCheckoutSessionId: session.id,
-          checkoutUrl: session.url,
-          updatedAt: new Date(),
-        })
-        .where(eq(bookOrdersTable.id, order.id))
-        .returning();
-      order = updated ?? order;
+      order = await createOrResumeCardCheckout(order);
     } catch (error) {
+      await markDefinitivelyFailedCheckout(error, order);
       req.log.error({ err: error }, "Card checkout could not be created");
       res.status(error instanceof StripeProviderError ? 502 : 503).json({
         error: "Card checkout is temporarily unavailable",
@@ -436,6 +631,37 @@ router.post("/book/orders", requireAuth, async (req, res): Promise<void> => {
     }
   }
   res.status(201).json(CreateBookOrderResponse.parse(orderResponse(order)));
+});
+
+router.post("/book/orders/:id/retry", requireAuth, async (req, res): Promise<void> => {
+  const params = RetryBookCheckoutParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid order id" });
+    return;
+  }
+  const userId = (req as Request & { userId: string }).userId;
+  const [order] = await db
+    .select()
+    .from(bookOrdersTable)
+    .where(and(eq(bookOrdersTable.id, params.data.id), eq(bookOrdersTable.clerkUserId, userId)));
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (order.method !== "card" || order.status !== "pending") {
+    res.status(409).json({ error: "Only pending card orders can resume checkout" });
+    return;
+  }
+  try {
+    const resumed = await createOrResumeCardCheckout(order);
+    res.json(RetryBookCheckoutResponse.parse(orderResponse(resumed)));
+  } catch (error) {
+    await markDefinitivelyFailedCheckout(error, order);
+    req.log.error({ err: error }, "Card checkout could not be resumed");
+    res.status(error instanceof StripeProviderError ? 502 : 503).json({
+      error: "Card checkout is temporarily unavailable",
+    });
+  }
 });
 
 router.post("/book/orders/:id/verify", requireAuth, async (req, res): Promise<void> => {
@@ -527,6 +753,10 @@ router.put("/book/admin/settings", requireAdmin, async (req, res): Promise<void>
     res.status(400).json({ error: "Invalid settings input" });
     return;
   }
+  if (parsed.data.offerPrice >= parsed.data.price) {
+    res.status(400).json({ error: "The first-edition offer price must be lower than the regular price" });
+    return;
+  }
   const adminId = (req as Request & { userId: string }).userId;
   const settings = await getSettings();
   const requestedPath = parsed.data.bookObjectPath;
@@ -555,11 +785,18 @@ router.put("/book/admin/settings", requireAdmin, async (req, res): Promise<void>
     }
   }
   let stripeRefs: { productId: string; priceId: string };
+  let stripeOfferRefs: { productId: string; priceId: string };
   try {
     stripeRefs = await createStripeCatalogPrice({
       currentProductId: settings.stripeProductId,
       currentPriceId: settings.stripePriceId,
       price: parsed.data.price,
+      currency: parsed.data.currency,
+    });
+    stripeOfferRefs = await createStripeCatalogPrice({
+      currentProductId: stripeRefs.productId,
+      currentPriceId: settings.stripeOfferPriceId,
+      price: parsed.data.offerPrice,
       currency: parsed.data.currency,
     });
   } catch (error) {
@@ -568,10 +805,12 @@ router.put("/book/admin/settings", requireAdmin, async (req, res): Promise<void>
     return;
   }
   const paymentMethodReady =
-    parsed.data.vodafoneCash.trim().length > 0 || Boolean(stripeRefs.priceId);
+    parsed.data.vodafoneCash.trim().length > 0 ||
+    parsed.data.instaPay.trim().length > 0 ||
+    Boolean(stripeRefs.priceId && stripeOfferRefs.priceId);
   if (
     parsed.data.salesEnabled &&
-    (!bookPath || !paymentMethodReady || parsed.data.price <= 0)
+    (!bookPath || !paymentMethodReady || parsed.data.offerPrice <= 0)
   ) {
     res.status(400).json({
       error: "Enabling sales requires a valid price, book PDF, and payment method",
@@ -593,12 +832,15 @@ router.put("/book/admin/settings", requireAdmin, async (req, res): Promise<void>
         .update(bookSettingsTable)
         .set({
           price: parsed.data.price,
+          offerPrice: parsed.data.offerPrice,
+          offerLimit: parsed.data.offerLimit,
           currency: parsed.data.currency,
           vodafoneCash: parsed.data.vodafoneCash,
           instaPay: parsed.data.instaPay,
           bookObjectPath: bookPath,
           stripeProductId: stripeRefs.productId,
           stripePriceId: stripeRefs.priceId,
+          stripeOfferPriceId: stripeOfferRefs.priceId,
           salesEnabled: parsed.data.salesEnabled,
           updatedBy: adminId,
           updatedAt: new Date(),
@@ -608,26 +850,7 @@ router.put("/book/admin/settings", requireAdmin, async (req, res): Promise<void>
       if (!saved) throw new Error("Unable to save settings");
       return saved;
     });
-    const bookReady = await hasValidBook(updated);
-    const effectivePaymentMethodReady =
-      updated.vodafoneCash.trim().length > 0 ||
-      updated.instaPay.trim().length > 0 ||
-      Boolean(updated.stripePriceId);
-    res.json(
-      SaveBookSettingsResponse.parse({
-        price: updated.price,
-        currency: updated.currency,
-        vodafoneCash: updated.vodafoneCash,
-        instaPay: updated.instaPay,
-        bookReady,
-        cardReady: Boolean(updated.stripePriceId),
-        salesEnabled:
-          updated.salesEnabled &&
-          Boolean(updated.bookObjectPath) &&
-          bookReady &&
-          effectivePaymentMethodReady,
-      }),
-    );
+    res.json(SaveBookSettingsResponse.parse(await toPublicSettings()));
   } catch (error) {
     req.log.error({ err: error }, "Book settings save failed");
     res.status(409).json({ error: "Settings could not be saved" });

@@ -12,4 +12,6 @@ export const BookOrderStatus = {
   pending: 'pending',
   paid: 'paid',
   rejected: 'rejected',
+  failed: 'failed',
+  expired: 'expired',
 } as const;

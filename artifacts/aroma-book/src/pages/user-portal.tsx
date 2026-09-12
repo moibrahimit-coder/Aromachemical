@@ -1,5 +1,11 @@
+import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/lib/i18n";
-import { useListBookOrders, BookOrder } from "@workspace/api-client-react";
+import {
+  useListBookOrders,
+  useRetryBookCheckout,
+  useVerifyBookPayment,
+  BookOrder,
+} from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -10,7 +16,49 @@ import { ar, enUS } from "date-fns/locale";
 
 export default function UserPortal() {
   const { t, language } = useLanguage();
-  const { data: orders, isLoading } = useListBookOrders();
+  const { data: orders, isLoading, refetch } = useListBookOrders();
+  const verifyPayment = useVerifyBookPayment();
+  const retryCheckout = useRetryBookCheckout();
+  const reconciledOrderIds = useRef(new Set<string>());
+  const [actionError, setActionError] = useState("");
+
+  useEffect(() => {
+    const unverifiedCardOrders = (orders ?? []).filter(
+      (order) =>
+        order.method === "card" &&
+        order.status === "pending" &&
+        !reconciledOrderIds.current.has(order.id),
+    );
+    if (!unverifiedCardOrders.length) return;
+
+    unverifiedCardOrders.forEach((order) => reconciledOrderIds.current.add(order.id));
+    void Promise.allSettled(
+      unverifiedCardOrders.map((order) => verifyPayment.mutateAsync({ id: order.id })),
+    ).then(() => refetch());
+  }, [orders, refetch, verifyPayment]);
+
+  const verifyOrder = async (id: string) => {
+    setActionError("");
+    try {
+      await verifyPayment.mutateAsync({ id });
+      await refetch();
+    } catch (error: unknown) {
+      const apiError = error as { data?: { error?: string } };
+      setActionError(apiError.data?.error || t("portal.verify_error"));
+    }
+  };
+
+  const retryOrder = async (id: string) => {
+    setActionError("");
+    try {
+      const order = await retryCheckout.mutateAsync({ id });
+      await refetch();
+      if (order.checkoutUrl) window.location.assign(order.checkoutUrl);
+    } catch (error: unknown) {
+      const apiError = error as { data?: { error?: string } };
+      setActionError(apiError.data?.error || t("portal.retry_error"));
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -20,6 +68,10 @@ export default function UserPortal() {
         return <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20 px-3 py-1"><CheckCircle2 className="w-3 h-3 mr-1 rtl:ml-1 rtl:mr-0" /> {t('portal.paid')}</Badge>;
       case 'rejected':
         return <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20 px-3 py-1"><XCircle className="w-3 h-3 mr-1 rtl:ml-1 rtl:mr-0" /> {t('portal.rejected')}</Badge>;
+      case 'failed':
+        return <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20 px-3 py-1"><XCircle className="w-3 h-3 mr-1 rtl:ml-1 rtl:mr-0" /> {t('portal.failed')}</Badge>;
+      case 'expired':
+        return <Badge variant="outline" className="bg-muted text-muted-foreground px-3 py-1"><Clock className="w-3 h-3 mr-1 rtl:ml-1 rtl:mr-0" /> {t('portal.expired')}</Badge>;
       default:
         return <Badge>{status}</Badge>;
     }
@@ -40,6 +92,12 @@ export default function UserPortal() {
   return (
     <div className="container mx-auto px-4 py-12 max-w-5xl">
       <h1 className="text-3xl font-bold mb-8">{t('portal.title')}</h1>
+      {actionError && (
+        <p className="mb-6 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          {actionError}
+        </p>
+      )}
       
       {!orders || orders.length === 0 ? (
         <Card className="border-border shadow-sm p-12 text-center bg-muted/20">
@@ -78,6 +136,7 @@ export default function UserPortal() {
                       <p className="font-medium text-primary">
                         {order.amount} {order.currency.toUpperCase()}
                       </p>
+                      <p className="text-xs text-muted-foreground">{order.priceTier === "offer" ? t('portal.offer_price') : t('portal.regular_price')}</p>
                     </div>
                   </div>
                 </div>
@@ -90,17 +149,40 @@ export default function UserPortal() {
                         {t('portal.download')}
                       </a>
                     </Button>
-                  ) : order.status === 'pending' && order.checkoutUrl ? (
-                    <Button asChild variant="outline" className="w-full gap-2">
-                      <a href={order.checkoutUrl}>
-                        <ExternalLink className="w-4 h-4" />
-                        Complete Payment
-                      </a>
-                    </Button>
+                  ) : order.status === 'pending' && order.method === 'card' ? (
+                    <div className="w-full space-y-2">
+                      {order.checkoutUrl ? (
+                        <Button asChild variant="outline" className="w-full gap-2">
+                          <a href={order.checkoutUrl}>
+                            <ExternalLink className="w-4 h-4" />
+                            {t('portal.complete_payment')}
+                          </a>
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          className="w-full gap-2"
+                          onClick={() => retryOrder(order.id)}
+                          disabled={retryCheckout.isPending}
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          {t('portal.retry_checkout')}
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => verifyOrder(order.id)}
+                        disabled={verifyPayment.isPending}
+                      >
+                        {t('portal.verify_payment')}
+                      </Button>
+                    </div>
                   ) : (
                     <div className="text-center">
                       <p className="text-sm text-muted-foreground italic mb-2">
-                        {order.status === 'pending' ? 'جاري مراجعة الإيصال' : 'تم رفض الطلب'}
+                        {order.status === 'pending' ? t('portal.manual_review') : t('portal.unavailable')}
                       </p>
                       <Button disabled variant="outline" className="w-full opacity-50">
                         <Download className="w-4 h-4 mr-2 rtl:ml-2 rtl:mr-0" />

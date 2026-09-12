@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { useLanguage } from "@/lib/i18n";
 import { 
@@ -17,7 +17,10 @@ export default function Checkout() {
   const { t, language } = useLanguage();
   const [, setLocation] = useLocation();
   const { data: settings, isLoading: isLoadingSettings } = useGetBookSettings();
-  const createOrder = useCreateBookOrder();
+  const orderIdempotencyKey = useRef(crypto.randomUUID()).current;
+  const createOrder = useCreateBookOrder({
+    request: { headers: { "Idempotency-Key": orderIdempotencyKey } },
+  });
   const requestUpload = useRequestBookUpload();
 
   const [name, setName] = useState("");
@@ -29,8 +32,18 @@ export default function Checkout() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [receiptPath, setReceiptPath] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (settings?.cardReady || method !== "card") return;
+    if (settings?.vodafoneCash) {
+      setMethod("vodafone");
+    } else if (settings?.instaPay) {
+      setMethod("instapay");
+    }
+  }, [method, settings?.cardReady, settings?.instaPay, settings?.vodafoneCash]);
 
   if (isLoadingSettings) {
     return (
@@ -46,7 +59,19 @@ export default function Checkout() {
         <Card className="max-w-md w-full text-center p-8">
           <AlertCircle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
           <CardTitle className="mb-2 text-2xl">{t('buy.not_ready')}</CardTitle>
-          <CardDescription className="text-base">{t('buy.price_coming')}</CardDescription>
+          {settings?.price ? (
+            <CardDescription className="text-base space-y-1">
+              {settings.offerAvailable && settings.offerPrice ? (
+                <>
+                  <span className="block line-through">{settings.price} {settings.currency.toUpperCase()}</span>
+                  <span className="block font-bold text-primary">{t('buy.first_edition_offer')} {settings.offerPrice} {settings.currency.toUpperCase()}</span>
+                  <span className="block">{t('buy.first_100_note')}</span>
+                </>
+              ) : (
+                <span>{t('buy.regular_price')} {settings.price} {settings.currency.toUpperCase()}</span>
+              )}
+            </CardDescription>
+          ) : <CardDescription className="text-base">{t('buy.price_coming')}</CardDescription>}
         </Card>
       </div>
     );
@@ -101,8 +126,16 @@ export default function Checkout() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    setSubmitError("");
     if (!name || !email) return;
+    const expectedAmount =
+      settings.offerAvailable && settings.offerPrice !== null
+        ? settings.offerPrice
+        : settings.price;
+    if (expectedAmount === null) {
+      setSubmitError(t('buy.price_coming'));
+      return;
+    }
     
     let finalPath = receiptPath;
     
@@ -118,6 +151,8 @@ export default function Checkout() {
           email,
           method,
           language: bookLanguage,
+          expectedAmount,
+          expectedCurrency: settings.currency as "egp" | "usd",
           ...(finalPath ? { receiptObjectPath: finalPath } : {})
         }
       });
@@ -127,9 +162,9 @@ export default function Checkout() {
       } else {
         setLocation(`/user-portal?order=${order.id}`);
       }
-    } catch (error: any) {
-      console.error(error);
-      alert(t('checkout.error'));
+    } catch (error: unknown) {
+      const apiError = error as { data?: { error?: string } };
+      setSubmitError(apiError.data?.error || t('checkout.error'));
     }
   };
 
@@ -140,9 +175,19 @@ export default function Checkout() {
       <Card className="border-border shadow-xl">
         <CardHeader className="text-center border-b border-border/50 pb-6 bg-muted/30">
           <CardTitle className="text-3xl font-bold">{t('checkout.title')}</CardTitle>
-          <div className="mt-4 inline-flex items-center justify-center px-4 py-2 bg-primary/10 text-primary rounded-full font-bold text-xl border border-primary/20">
-            {settings.price} {settings.currency.toUpperCase()}
-          </div>
+          {settings.offerAvailable && settings.offerPrice ? (
+            <div className="mt-4 space-y-1">
+              <div className="text-muted-foreground line-through">{settings.price} {settings.currency.toUpperCase()}</div>
+              <div className="inline-flex items-center justify-center px-4 py-2 bg-primary/10 text-primary rounded-full font-bold text-xl border border-primary/20">
+                {t('buy.first_edition_offer')} {settings.offerPrice} {settings.currency.toUpperCase()}
+              </div>
+              <p className="text-sm text-muted-foreground">{t('checkout.offer_terms')}</p>
+            </div>
+          ) : (
+            <div className="mt-4 inline-flex items-center justify-center px-4 py-2 bg-primary/10 text-primary rounded-full font-bold text-xl border border-primary/20">
+              {settings.price} {settings.currency.toUpperCase()}
+            </div>
+          )}
         </CardHeader>
         
         <form onSubmit={handleSubmit}>
@@ -276,6 +321,12 @@ export default function Checkout() {
                   {receiptPath && <p className="text-sm text-green-600 mt-2">{t('checkout.success')}</p>}
                 </div>
               </div>
+            )}
+            {submitError && (
+              <p className="text-sm text-destructive flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                {submitError}
+              </p>
             )}
           </CardContent>
           

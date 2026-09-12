@@ -11,6 +11,11 @@ export interface HealthStatus {
 export interface BookSettings {
   /** @nullable */
   price: number | null;
+  /** @nullable */
+  offerPrice: number | null;
+  /** @minimum 1 */
+  offerLimit: number;
+  offerAvailable: boolean;
   currency: string;
   vodafoneCash: string;
   instaPay: string;
@@ -33,6 +38,16 @@ export interface SettingsInput {
      * @exclusiveMinimum 0
      */
   price: number;
+  /**
+     * @maximum 100000
+     * @exclusiveMinimum 0
+     */
+  offerPrice: number;
+  /**
+     * @minimum 1
+     * @maximum 100000
+     */
+  offerLimit: number;
   currency: SettingsInputCurrency;
   /** @maxLength 100 */
   vodafoneCash: string;
@@ -63,6 +78,16 @@ export const BookOrderStatus = {
   pending: 'pending',
   paid: 'paid',
   rejected: 'rejected',
+  failed: 'failed',
+  expired: 'expired',
+} as const;
+
+export type BookOrderPriceTier = typeof BookOrderPriceTier[keyof typeof BookOrderPriceTier];
+
+
+export const BookOrderPriceTier = {
+  offer: 'offer',
+  regular: 'regular',
 } as const;
 
 export interface BookOrder {
@@ -73,6 +98,7 @@ export interface BookOrder {
   status: BookOrderStatus;
   amount: number;
   currency: string;
+  priceTier: BookOrderPriceTier;
   createdAt: string;
   hasReceipt: boolean;
   /** @nullable */
@@ -98,6 +124,14 @@ export const OrderInputLanguage = {
   en: 'en',
 } as const;
 
+export type OrderInputExpectedCurrency = typeof OrderInputExpectedCurrency[keyof typeof OrderInputExpectedCurrency];
+
+
+export const OrderInputExpectedCurrency = {
+  egp: 'egp',
+  usd: 'usd',
+} as const;
+
 export interface OrderInput {
   /**
      * @minLength 2
@@ -108,6 +142,12 @@ export interface OrderInput {
   email: string;
   method: OrderInputMethod;
   language: OrderInputLanguage;
+  /**
+     * @maximum 100000
+     * @exclusiveMinimum 0
+     */
+  expectedAmount: number;
+  expectedCurrency: OrderInputExpectedCurrency;
   receiptObjectPath?: string;
 }
 

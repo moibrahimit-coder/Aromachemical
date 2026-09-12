@@ -44,9 +44,19 @@ export default function Home() {
                 </Button>
                 <div className="flex flex-col items-center sm:items-start text-sm text-muted-foreground">
                   {settings?.price ? (
-                    <span className="font-bold text-foreground text-xl">
-                      {settings.price} {settings.currency.toUpperCase()}
-                    </span>
+                    settings.offerAvailable && settings.offerPrice ? (
+                      <>
+                        <span className="text-sm line-through">{settings.price} {settings.currency.toUpperCase()}</span>
+                        <span className="font-bold text-primary text-xl">
+                          {t('buy.first_edition_offer')} {settings.offerPrice} {settings.currency.toUpperCase()}
+                        </span>
+                        <span>{t('buy.first_100_note')}</span>
+                      </>
+                    ) : (
+                      <span className="font-bold text-foreground text-xl">
+                        {settings.price} {settings.currency.toUpperCase()}
+                      </span>
+                    )
                   ) : (
                     <span className="font-bold text-primary text-lg">
                       {t('buy.price_coming')}
@@ -173,6 +183,13 @@ export default function Home() {
           <p className="text-xl text-muted-foreground">
             {t('hero.subtitle')}
           </p>
+          {settings?.price && settings.offerPrice && (
+            <p className="text-sm text-muted-foreground">
+              {settings.offerAvailable
+                ? `${t('buy.first_edition_offer')} ${settings.offerPrice} ${settings.currency.toUpperCase()} — ${t('buy.first_100_note')}`
+                : `${t('buy.regular_price')} ${settings.price} ${settings.currency.toUpperCase()}`}
+            </p>
+          )}
           <div className="pt-8">
             <Button asChild size="lg" className="h-14 px-12 text-lg rounded-full shadow-lg shadow-primary/20 group">
               <Link href="/checkout">

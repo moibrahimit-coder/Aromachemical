@@ -8,6 +8,11 @@
 export interface BookSettings {
   /** @nullable */
   price: number | null;
+  /** @nullable */
+  offerPrice: number | null;
+  /** @minimum 1 */
+  offerLimit: number;
+  offerAvailable: boolean;
   currency: string;
   vodafoneCash: string;
   instaPay: string;
